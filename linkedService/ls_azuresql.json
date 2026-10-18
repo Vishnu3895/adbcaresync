@@ -17,6 +17,9 @@
 					"type": "LinkedServiceReference"
 				},
 				"secretName": "sqlpassword"
+			},
+			"alwaysEncryptedSettings": {
+				"alwaysEncryptedAkvAuthType": "ManagedIdentity"
 			}
 		}
 	}
