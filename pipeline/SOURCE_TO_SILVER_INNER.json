@@ -202,8 +202,7 @@
 		],
 		"parameters": {
 			"table_details": {
-				"type": "string",
-				"defaultValue": "1"
+				"type": "int"
 			}
 		},
 		"variables": {
