@@ -300,7 +300,7 @@
 						{
 							"type": "Query",
 							"text": {
-								"value": "INSERT INTO ctrl.audit_log(adf_run_id,table_id,stage,start_time,status)\nVALUES('@{pipeline().parameters.adf_runid}',@{item().table_id},'SOURCE_TO_SILVER',SYSUTCDATETIME(),'IN_PROGRESS')",
+								"value": "INSERT INTO ctrl.audit_log(adf_run_id,table_id,stage,start_time,status)\nVALUES('@{pipeline().parameters.adf_runid}',@{activity('Read table details').output.firstRow.table_id},'SOURCE_TO_SILVER',SYSUTCDATETIME(),'SUCCESS')",
 								"type": "Expression"
 							}
 						}
