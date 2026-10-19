@@ -70,7 +70,17 @@
 									"referenceName": "SOURCE_TO_SILVER_INNER",
 									"type": "PipelineReference"
 								},
-								"waitOnCompletion": false
+								"waitOnCompletion": false,
+								"parameters": {
+									"table_details": {
+										"value": "@item().table_id",
+										"type": "Expression"
+									},
+									"adf_runid": {
+										"value": "@pipeline().parameters.adf_runid",
+										"type": "Expression"
+									}
+								}
 							}
 						},
 						{
@@ -95,6 +105,42 @@
 										"type": "Query",
 										"text": {
 											"value": "INSERT INTO ctrl.audit_log(adf_run_id,table_id,stage,start_time,status)\nVALUES('@{pipeline().parameters.adf_runid}',@{item().table_id},'SOURCE_TO_SILVER',SYSUTCDATETIME(),'IN_PROGRESS')",
+											"type": "Expression"
+										}
+									}
+								],
+								"scriptBlockExecutionTimeout": "02:00:00"
+							}
+						},
+						{
+							"name": "Failed status",
+							"type": "Script",
+							"dependsOn": [
+								{
+									"activity": "Injest from Source to Silver",
+									"dependencyConditions": [
+										"Failed"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"linkedServiceName": {
+								"referenceName": "ls_azuresql",
+								"type": "LinkedServiceReference"
+							},
+							"typeProperties": {
+								"scripts": [
+									{
+										"type": "Query",
+										"text": {
+											"value": "INSERT INTO ctrl.audit_log(adf_run_id,table_id,stage,start_time,status)\nVALUES('@{pipeline().parameters.adf_runid}',@{item().table_id},'SOURCE_TO_SILVER',SYSUTCDATETIME(),'FAILED')",
 											"type": "Expression"
 										}
 									}
