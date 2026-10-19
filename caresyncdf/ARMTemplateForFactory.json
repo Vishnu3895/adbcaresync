@@ -1,0 +1,816 @@
+{
+	"$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"factoryName": {
+			"type": "string",
+			"metadata": "Data Factory name",
+			"defaultValue": "caresyncdf"
+		},
+		"ls_datalake_accountKey": {
+			"type": "secureString",
+			"metadata": "Secure string for 'accountKey' of 'ls_datalake'"
+		},
+		"AzureDatabricks1_properties_typeProperties_existingClusterId": {
+			"type": "string",
+			"defaultValue": "1018-121719-zu05344b"
+		},
+		"ls_azuresql_properties_typeProperties_server": {
+			"type": "string",
+			"defaultValue": "caresyncvishserver.database.windows.net"
+		},
+		"ls_azuresql_properties_typeProperties_database": {
+			"type": "string",
+			"defaultValue": "caresyncvishdb"
+		},
+		"ls_azuresql_properties_typeProperties_userName": {
+			"type": "string",
+			"defaultValue": "Vish3895az"
+		},
+		"ls_datalake_properties_typeProperties_url": {
+			"type": "string",
+			"defaultValue": "https://caresyncvishstr.dfs.core.windows.net/"
+		},
+		"ls_keyvault_properties_typeProperties_baseUrl": {
+			"type": "string",
+			"defaultValue": "https://caresyncvishvault.vault.azure.net/"
+		},
+		"ls_postgressql_properties_typeProperties_server": {
+			"type": "string",
+			"defaultValue": "ep-blue-wind-b5ohhh8c-pooler.c-7.us-east-2.aws.neon.tech"
+		},
+		"ls_postgressql_properties_typeProperties_database": {
+			"type": "string",
+			"defaultValue": "neondb"
+		},
+		"ls_postgressql_properties_typeProperties_username": {
+			"type": "string",
+			"defaultValue": "neondb_owner"
+		}
+	},
+	"variables": {
+		"factoryId": "[concat('Microsoft.DataFactory/factories/', parameters('factoryName'))]"
+	},
+	"resources": [
+		{
+			"name": "[concat(parameters('factoryName'), '/SOURCE_TO_SILVER_INNER')]",
+			"type": "Microsoft.DataFactory/factories/pipelines",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"activities": [
+					{
+						"name": "Read table details",
+						"type": "Lookup",
+						"dependsOn": [],
+						"policy": {
+							"timeout": "0.12:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"source": {
+								"type": "AzureSqlSource",
+								"sqlReaderQuery": {
+									"value": "select * from ctrl.table_config where table_id = @{pipeline().parameters.table_details}",
+									"type": "Expression"
+								},
+								"queryTimeout": "02:00:00",
+								"partitionOption": "None"
+							},
+							"dataset": {
+								"referenceName": "AzureSqlTable1",
+								"type": "DatasetReference",
+								"parameters": {}
+							},
+							"firstRowOnly": true
+						}
+					},
+					{
+						"name": "Ingest all the tables",
+						"type": "Copy",
+						"dependsOn": [
+							{
+								"activity": "Check_load_type",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.12:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"source": {
+								"type": "PostgreSqlV2Source",
+								"query": {
+									"value": "select * from public.@{activity('Read table details').output.firstRow.source_table_name} \n@{if(equals(activity('Read table details').output.firstRow.load_type,'FULL'),\n    '',\n    concat('where ',activity('Read table details').output.firstRow.watermark_column,'>','''',variables('watermark_value'),'''')\n)}",
+									"type": "Expression"
+								},
+								"queryTimeout": "02:00:00"
+							},
+							"sink": {
+								"type": "ParquetSink",
+								"storeSettings": {
+									"type": "AzureBlobFSWriteSettings"
+								},
+								"formatSettings": {
+									"type": "ParquetWriteSettings"
+								}
+							},
+							"enableStaging": false,
+							"translator": {
+								"type": "TabularTranslator",
+								"typeConversion": true,
+								"typeConversionSettings": {
+									"allowDataTruncation": true,
+									"treatBooleanAsNumber": false
+								}
+							}
+						},
+						"inputs": [
+							{
+								"referenceName": "PostgreSqlTable1",
+								"type": "DatasetReference",
+								"parameters": {}
+							}
+						],
+						"outputs": [
+							{
+								"referenceName": "Parquet1",
+								"type": "DatasetReference",
+								"parameters": {
+									"container": "landing",
+									"folder": {
+										"value": "@concat(activity('Read table details').output.firstRow.source_system,'/',activity('Read table details').output.firstRow.source_table_name,'/',variables('current_time'))",
+										"type": "Expression"
+									}
+								}
+							}
+						]
+					},
+					{
+						"name": "Set current time",
+						"type": "SetVariable",
+						"dependsOn": [],
+						"policy": {
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"variableName": "current_time",
+							"value": {
+								"value": "@formatDateTime(utcNow(),'yyyy-MM-dd HH:mm:ss')",
+								"type": "Expression"
+							}
+						}
+					},
+					{
+						"name": "Landing_to_bronze",
+						"type": "DatabricksNotebook",
+						"dependsOn": [
+							{
+								"activity": "Ingest all the tables",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.12:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"notebookPath": "/Caresync-repo/vishcaresynce_adb_repo/LANDING_TO_BRONZE",
+							"baseParameters": {
+								"landing_timestamp": {
+									"value": "@variables('current_time')",
+									"type": "Expression"
+								},
+								"source_system": {
+									"value": "@activity('Read table details').output.firstRow.source_system",
+									"type": "Expression"
+								},
+								"source_table_name": {
+									"value": "@activity('Read table details').output.firstRow.bronze_table_name",
+									"type": "Expression"
+								}
+							}
+						},
+						"linkedServiceName": {
+							"referenceName": "AzureDatabricks1",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "Bronze_to_silver",
+						"type": "DatabricksNotebook",
+						"dependsOn": [
+							{
+								"activity": "Landing_to_bronze",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.12:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"notebookPath": "/Caresync-repo/vishcaresynce_adb_repo/BRONZE_TO_SILVER",
+							"baseParameters": {
+								"landing_timestamp": {
+									"value": "@variables('current_time')",
+									"type": "Expression"
+								},
+								"table_name": {
+									"value": "@activity('Read table details').output.firstRow.silver_table_name",
+									"type": "Expression"
+								}
+							}
+						},
+						"linkedServiceName": {
+							"referenceName": "AzureDatabricks1",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "Check_load_type",
+						"type": "IfCondition",
+						"dependsOn": [
+							{
+								"activity": "Read table details",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							},
+							{
+								"activity": "Set current time",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"userProperties": [],
+						"typeProperties": {
+							"expression": {
+								"value": "@not(equals(activity('Read table details').output.firstRow.load_type,'FULL'))",
+								"type": "Expression"
+							},
+							"ifTrueActivities": [
+								{
+									"name": "Store Watermark value",
+									"type": "SetVariable",
+									"dependsOn": [
+										{
+											"activity": "Read watermark value",
+											"dependencyConditions": [
+												"Succeeded"
+											]
+										}
+									],
+									"policy": {
+										"secureOutput": false,
+										"secureInput": false
+									},
+									"userProperties": [],
+									"typeProperties": {
+										"variableName": "watermark_value",
+										"value": {
+											"value": "@formatDateTime(activity('Read watermark value').output.firstRow.watermark_value,'yyyy-MM-dd HH:mm:ss')",
+											"type": "Expression"
+										}
+									}
+								},
+								{
+									"name": "Read watermark value",
+									"type": "Lookup",
+									"dependsOn": [],
+									"policy": {
+										"timeout": "0.12:00:00",
+										"retry": 2,
+										"retryIntervalInSeconds": 30,
+										"secureOutput": false,
+										"secureInput": false
+									},
+									"userProperties": [],
+									"typeProperties": {
+										"source": {
+											"type": "AzureSqlSource",
+											"sqlReaderQuery": {
+												"value": "select watermark_value from ctrl.watermark where table_id = @{activity('Read table details').output.firstRow.table_id}",
+												"type": "Expression"
+											},
+											"queryTimeout": "02:00:00",
+											"partitionOption": "None"
+										},
+										"dataset": {
+											"referenceName": "AzureSqlTable1",
+											"type": "DatasetReference",
+											"parameters": {}
+										}
+									}
+								}
+							]
+						}
+					},
+					{
+						"name": "Success status",
+						"type": "Script",
+						"dependsOn": [
+							{
+								"activity": "Bronze_to_silver",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.12:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"linkedServiceName": {
+							"referenceName": "ls_azuresql",
+							"type": "LinkedServiceReference"
+						},
+						"typeProperties": {
+							"scripts": [
+								{
+									"type": "Query",
+									"text": {
+										"value": "INSERT INTO ctrl.audit_log(adf_run_id,table_id,stage,start_time,status)\nVALUES('@{pipeline().parameters.adf_runid}',@{activity('Read table details').output.firstRow.table_id},'SOURCE_TO_SILVER',SYSUTCDATETIME(),'SUCCESS')",
+										"type": "Expression"
+									}
+								}
+							],
+							"scriptBlockExecutionTimeout": "02:00:00"
+						}
+					},
+					{
+						"name": "Update the watermark",
+						"type": "Script",
+						"dependsOn": [
+							{
+								"activity": "Bronze_to_silver",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.12:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"linkedServiceName": {
+							"referenceName": "ls_azuresql",
+							"type": "LinkedServiceReference"
+						},
+						"typeProperties": {
+							"scripts": [
+								{
+									"type": "Query",
+									"text": {
+										"value": "Update ctrl.watermark\nset watermark_value = @{variables('watermark_value')}",
+										"type": "Expression"
+									}
+								}
+							],
+							"scriptBlockExecutionTimeout": "02:00:00"
+						}
+					}
+				],
+				"policy": {
+					"elapsedTimeMetric": {}
+				},
+				"parameters": {
+					"table_details": {
+						"type": "int",
+						"defaultValue": 1
+					},
+					"adf_runid": {
+						"type": "string"
+					}
+				},
+				"variables": {
+					"y": {
+						"type": "String"
+					},
+					"current_time": {
+						"type": "String"
+					},
+					"watermark_value": {
+						"type": "String"
+					}
+				},
+				"annotations": []
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/datasets/AzureSqlTable1')]",
+				"[concat(variables('factoryId'), '/datasets/PostgreSqlTable1')]",
+				"[concat(variables('factoryId'), '/datasets/Parquet1')]",
+				"[concat(variables('factoryId'), '/linkedServices/AzureDatabricks1')]",
+				"[concat(variables('factoryId'), '/linkedServices/ls_azuresql')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/SOURCE_TO_SILVER_MAIN')]",
+			"type": "Microsoft.DataFactory/factories/pipelines",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"activities": [
+					{
+						"name": "Read the table details",
+						"type": "Lookup",
+						"dependsOn": [],
+						"policy": {
+							"timeout": "0.12:00:00",
+							"retry": 2,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"source": {
+								"type": "AzureSqlSource",
+								"sqlReaderQuery": {
+									"value": "select table_id from ctrl.table_config where is_active = 1 and source_system = '@{pipeline().parameters.source_system}'",
+									"type": "Expression"
+								},
+								"queryTimeout": "02:00:00",
+								"partitionOption": "None"
+							},
+							"dataset": {
+								"referenceName": "AzureSqlTable1",
+								"type": "DatasetReference",
+								"parameters": {}
+							},
+							"firstRowOnly": false
+						}
+					},
+					{
+						"name": "Ingest all tables",
+						"type": "ForEach",
+						"dependsOn": [
+							{
+								"activity": "Read the table details",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"userProperties": [],
+						"typeProperties": {
+							"items": {
+								"value": "@activity('Read the table details').output.value",
+								"type": "Expression"
+							},
+							"isSequential": false,
+							"activities": [
+								{
+									"name": "Injest from Source to Silver",
+									"type": "ExecutePipeline",
+									"dependsOn": [
+										{
+											"activity": "Insert in Progress status",
+											"dependencyConditions": [
+												"Succeeded"
+											]
+										}
+									],
+									"policy": {
+										"secureInput": false
+									},
+									"userProperties": [],
+									"typeProperties": {
+										"pipeline": {
+											"referenceName": "SOURCE_TO_SILVER_INNER",
+											"type": "PipelineReference"
+										},
+										"waitOnCompletion": false,
+										"parameters": {
+											"table_details": {
+												"value": "@item().table_id",
+												"type": "Expression"
+											},
+											"adf_runid": {
+												"value": "@pipeline().parameters.adf_runid",
+												"type": "Expression"
+											}
+										}
+									}
+								},
+								{
+									"name": "Insert in Progress status",
+									"type": "Script",
+									"dependsOn": [],
+									"policy": {
+										"timeout": "0.12:00:00",
+										"retry": 0,
+										"retryIntervalInSeconds": 30,
+										"secureOutput": false,
+										"secureInput": false
+									},
+									"userProperties": [],
+									"linkedServiceName": {
+										"referenceName": "ls_azuresql",
+										"type": "LinkedServiceReference"
+									},
+									"typeProperties": {
+										"scripts": [
+											{
+												"type": "Query",
+												"text": {
+													"value": "INSERT INTO ctrl.audit_log(adf_run_id,table_id,stage,start_time,status)\nVALUES('@{pipeline().parameters.adf_runid}',@{item().table_id},'SOURCE_TO_SILVER',SYSUTCDATETIME(),'IN_PROGRESS')",
+													"type": "Expression"
+												}
+											}
+										],
+										"scriptBlockExecutionTimeout": "02:00:00"
+									}
+								},
+								{
+									"name": "Failed status",
+									"type": "Script",
+									"dependsOn": [
+										{
+											"activity": "Injest from Source to Silver",
+											"dependencyConditions": [
+												"Failed"
+											]
+										}
+									],
+									"policy": {
+										"timeout": "0.12:00:00",
+										"retry": 0,
+										"retryIntervalInSeconds": 30,
+										"secureOutput": false,
+										"secureInput": false
+									},
+									"userProperties": [],
+									"linkedServiceName": {
+										"referenceName": "ls_azuresql",
+										"type": "LinkedServiceReference"
+									},
+									"typeProperties": {
+										"scripts": [
+											{
+												"type": "Query",
+												"text": {
+													"value": "INSERT INTO ctrl.audit_log(adf_run_id,table_id,stage,start_time,status)\nVALUES('@{pipeline().parameters.adf_runid}',@{item().table_id},'SOURCE_TO_SILVER',SYSUTCDATETIME(),'FAILED')",
+													"type": "Expression"
+												}
+											}
+										],
+										"scriptBlockExecutionTimeout": "02:00:00"
+									}
+								}
+							]
+						}
+					}
+				],
+				"policy": {
+					"elapsedTimeMetric": {}
+				},
+				"parameters": {
+					"source_system": {
+						"type": "string",
+						"defaultValue": "neon_postgres"
+					},
+					"adf_runid": {
+						"type": "string",
+						"defaultValue": "a1"
+					}
+				},
+				"variables": {
+					"x": {
+						"type": "String"
+					},
+					"y": {
+						"type": "Integer"
+					}
+				},
+				"annotations": []
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/datasets/AzureSqlTable1')]",
+				"[concat(variables('factoryId'), '/pipelines/SOURCE_TO_SILVER_INNER')]",
+				"[concat(variables('factoryId'), '/linkedServices/ls_azuresql')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/AzureSqlTable1')]",
+			"type": "Microsoft.DataFactory/factories/datasets",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"linkedServiceName": {
+					"referenceName": "ls_azuresql",
+					"type": "LinkedServiceReference"
+				},
+				"annotations": [],
+				"type": "AzureSqlTable",
+				"schema": [],
+				"typeProperties": {}
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/linkedServices/ls_azuresql')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/Parquet1')]",
+			"type": "Microsoft.DataFactory/factories/datasets",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"linkedServiceName": {
+					"referenceName": "ls_datalake",
+					"type": "LinkedServiceReference"
+				},
+				"parameters": {
+					"container": {
+						"type": "string",
+						"defaultValue": "landing"
+					},
+					"folder": {
+						"type": "string"
+					}
+				},
+				"annotations": [],
+				"type": "Parquet",
+				"typeProperties": {
+					"location": {
+						"type": "AzureBlobFSLocation",
+						"folderPath": {
+							"value": "@dataset().folder",
+							"type": "Expression"
+						},
+						"fileSystem": {
+							"value": "@dataset().container",
+							"type": "Expression"
+						}
+					},
+					"compressionCodec": "snappy"
+				},
+				"schema": []
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/linkedServices/ls_datalake')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/PostgreSqlTable1')]",
+			"type": "Microsoft.DataFactory/factories/datasets",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"linkedServiceName": {
+					"referenceName": "ls_postgressql",
+					"type": "LinkedServiceReference"
+				},
+				"annotations": [],
+				"type": "PostgreSqlV2Table",
+				"schema": [],
+				"typeProperties": {}
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/linkedServices/ls_postgressql')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/AzureDatabricks1')]",
+			"type": "Microsoft.DataFactory/factories/linkedServices",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"annotations": [],
+				"type": "AzureDatabricks",
+				"typeProperties": {
+					"domain": "https://adb-7405609486294284.4.azuredatabricks.net",
+					"accessToken": {
+						"type": "AzureKeyVaultSecret",
+						"store": {
+							"referenceName": "ls_keyvault",
+							"type": "LinkedServiceReference"
+						},
+						"secretName": "databrickspassword"
+					},
+					"existingClusterId": "[parameters('AzureDatabricks1_properties_typeProperties_existingClusterId')]"
+				}
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/linkedServices/ls_keyvault')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/ls_azuresql')]",
+			"type": "Microsoft.DataFactory/factories/linkedServices",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"annotations": [],
+				"type": "AzureSqlDatabase",
+				"typeProperties": {
+					"server": "[parameters('ls_azuresql_properties_typeProperties_server')]",
+					"database": "[parameters('ls_azuresql_properties_typeProperties_database')]",
+					"encrypt": "mandatory",
+					"trustServerCertificate": false,
+					"authenticationType": "SQL",
+					"userName": "[parameters('ls_azuresql_properties_typeProperties_userName')]",
+					"password": {
+						"type": "AzureKeyVaultSecret",
+						"store": {
+							"referenceName": "ls_keyvault",
+							"type": "LinkedServiceReference"
+						},
+						"secretName": "sqlpassword"
+					},
+					"alwaysEncryptedSettings": {
+						"alwaysEncryptedAkvAuthType": "ManagedIdentity"
+					}
+				}
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/linkedServices/ls_keyvault')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/ls_datalake')]",
+			"type": "Microsoft.DataFactory/factories/linkedServices",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"annotations": [],
+				"type": "AzureBlobFS",
+				"typeProperties": {
+					"url": "[parameters('ls_datalake_properties_typeProperties_url')]",
+					"accountKey": {
+						"type": "SecureString",
+						"value": "[parameters('ls_datalake_accountKey')]"
+					}
+				}
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/ls_keyvault')]",
+			"type": "Microsoft.DataFactory/factories/linkedServices",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"annotations": [],
+				"type": "AzureKeyVault",
+				"typeProperties": {
+					"baseUrl": "[parameters('ls_keyvault_properties_typeProperties_baseUrl')]"
+				}
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/ls_postgressql')]",
+			"type": "Microsoft.DataFactory/factories/linkedServices",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"annotations": [],
+				"type": "PostgreSqlV2",
+				"typeProperties": {
+					"server": "[parameters('ls_postgressql_properties_typeProperties_server')]",
+					"port": 5432,
+					"database": "[parameters('ls_postgressql_properties_typeProperties_database')]",
+					"username": "[parameters('ls_postgressql_properties_typeProperties_username')]",
+					"password": {
+						"type": "AzureKeyVaultSecret",
+						"store": {
+							"referenceName": "ls_keyvault",
+							"type": "LinkedServiceReference"
+						},
+						"secretName": "postgres-password"
+					},
+					"sslMode": 2,
+					"authenticationType": "Basic"
+				}
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/linkedServices/ls_keyvault')]"
+			]
+		}
+	]
+}
